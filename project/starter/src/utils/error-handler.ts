@@ -57,7 +57,7 @@ export type ErrorCode = typeof ErrorCodes[keyof typeof ErrorCodes];
  * 4. If all retries exhausted, throw ReviewError with RETRY_EXHAUSTED code
  *
  * @param fn - Async function to retry
- * @param maxRetries - Maximum number of retries (default: 3)
+ * @param maxRetries - Maximum retries after the initial attempt (default: 3)
  * @param delayMs - Base delay in milliseconds (default: 1000)
  * @returns The result of the successful function execution
  * @throws ReviewError with RETRY_EXHAUSTED code if all retries fail
@@ -67,16 +67,24 @@ export async function withRetry<T>(
   maxRetries: number = 3,
   delayMs: number = 1000
 ): Promise<T> {
-  // TODO: Implement retry logic with exponential backoff
-  // Hints:
-  // - Use a for loop from 1 to maxRetries
-  // - Use try/catch to catch errors
-  // - Calculate backoff: delayMs * Math.pow(2, attempt - 1)
-  // - Add jitter: Math.random() * 100
-  // - Use setTimeout wrapped in Promise for delay
-  // - Throw ReviewError with ErrorCodes.RETRY_EXHAUSTED if all retries fail
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return await fn();
+    } catch (error) {
+      if (attempt > maxRetries) {
+        throw new ReviewError(
+          `Operation failed after ${attempt} attempts`,
+          ErrorCodes.RETRY_EXHAUSTED,
+          { attempts: attempt, lastError: error }
+        );
+      }
 
-  throw new Error('Not implemented');
+      const backoff = delayMs * 2 ** (attempt - 1);
+      // Spread simultaneous retries out to prevent a thundering herd.
+      const jitter = Math.random() * 100;
+      await new Promise<void>(resolve => setTimeout(resolve, backoff + jitter));
+    }
+  }
 }
 
 /**
