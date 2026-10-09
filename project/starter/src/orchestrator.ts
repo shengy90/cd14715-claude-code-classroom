@@ -1,33 +1,77 @@
-import { ReviewReport } from './types/report-types';
+import { query } from '@anthropic-ai/claude-agent-sdk';
+import { codeQualityAnalyzer, testCoverageAnalyzer, refactoringSuggester } from './agents';
+import { ORCHESTRATOR_PROMPT } from './prompts';
+import { mcpServersConfig } from './config/mcp.config';
+import { ReviewReportSchema, ReviewReportJSONSchema } from './types';
+import type { ReviewReport } from './types';
 
-/**
- * Orchestrator configuration options
- */
 export interface OrchestratorOptions {
+  model?: string;
+  projectRoot?: string;
+  maxTurns?: number;
 }
 
-/**
- * Main Code Review Orchestrator
- * Coordinates subagents to analyze pull requests and generate comprehensive reports
- */
 export class CodeReviewOrchestrator {
+  constructor(private readonly options: OrchestratorOptions = {}) {}
 
+  async reviewPullRequest(owner: string, repo: string, prNumber: number): Promise<ReviewReport> {
+    const model = this.options.model ?? process.env.ANTHROPIC_MODEL;
+    const cwd = this.options.projectRoot ?? process.env.PROJECT_ROOT;
+    if (!model?.trim() || !cwd?.trim()) {
+      throw new Error('Set ANTHROPIC_MODEL and PROJECT_ROOT, or provide model and projectRoot options.');
+    }
+    if (!owner.trim() || !repo.trim() || !Number.isSafeInteger(prNumber) || prNumber < 1) {
+      throw new Error('Provide owner, repo, and a positive integer PR number.');
+    }
 
-  constructor(options: OrchestratorOptions = {}) {
-  }
+    const builtInTools = ['Task', 'Read', 'Glob', 'Grep', 'Skill'];
+    const stream = query({
+      prompt: `Review pull request ${JSON.stringify({ owner, repo, number: prNumber })}.
+Use all three named subagents explicitly for each reviewable changed source file.
+Return the aggregated ReviewReport. The caller will supply measured timing metadata.`,
+      options: {
+        model,
+        cwd,
+        maxTurns: this.options.maxTurns ?? 100,
+        systemPrompt: ORCHESTRATOR_PROMPT,
+        settingSources: ['project'],
+        agents: {
+          'code-quality-analyzer': codeQualityAnalyzer,
+          'test-coverage-analyzer': testCoverageAnalyzer,
+          'refactoring-suggester': refactoringSuggester,
+        },
+        tools: builtInTools,
+        allowedTools: [
+          ...builtInTools,
+          'mcp__github__pull_request_read',
+          'mcp__github__get_file_contents',
+          'mcp__github__search_code',
+          'mcp__eslint__lint-files',
+        ],
+        permissionMode: 'dontAsk',
+        mcpServers: mcpServersConfig,
+        outputFormat: { type: 'json_schema', schema: ReviewReportJSONSchema },
+      },
+    });
 
-  /**
-   * Review a pull request using parallel subagent analysis
-   * @param owner - Repository owner
-   * @param repo - Repository name
-   * @param prNumber - Pull request number
-   * @returns Complete review report
-   */
-  async reviewPullRequest(
-    owner: string,
-    repo: string,
-    prNumber: number
-  ): Promise<ReviewReport> {
-    throw new Error('Not implemented');
+    for await (const message of stream) {
+      if (message.type !== 'result') continue;
+      if (message.subtype !== 'success') {
+        throw new Error(`Review failed (${message.subtype}): ${message.errors.join('; ')}`);
+      }
+      if (message.is_error || message.structured_output === undefined) {
+        throw new Error('Review did not return successful structured output.');
+      }
+      const parsed = ReviewReportSchema.safeParse(message.structured_output);
+      if (!parsed.success) {
+        throw new Error(`Invalid review report: ${parsed.error.message}`);
+      }
+      const report = parsed.data;
+      report.metadata.analyzedAt = new Date().toISOString();
+      report.metadata.duration = message.duration_ms;
+      return report;
+    }
+
+    throw new Error('Review ended without a final result.');
   }
 }
