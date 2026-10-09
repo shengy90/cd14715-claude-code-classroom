@@ -104,14 +104,21 @@ export async function withTimeout<T>(
   timeoutMs: number,
   errorMessage: string = 'Operation timed out'
 ): Promise<T> {
-  // TODO: Implement timeout wrapper using Promise.race
-  // Hints:
-  // - Use Promise.race to race fn() against a timeout promise
-  // - The timeout promise should reject after timeoutMs milliseconds
-  // - Throw ReviewError with ErrorCodes.AGENT_TIMEOUT on timeout
-  // - Include timeoutMs in metadata
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      reject(new ReviewError(errorMessage, ErrorCodes.AGENT_TIMEOUT, { timeoutMs }));
+    }, timeoutMs);
+  });
 
-  throw new Error('Not implemented');
+  try {
+    return await Promise.race([fn(), timeout]);
+  } finally {
+    // Promise.race does not cancel the losing timer.
+    if (timer !== undefined) {
+      clearTimeout(timer);
+    }
+  }
 }
 
 /**
