@@ -5,15 +5,26 @@ import { ORCHESTRATOR_PROMPT } from './prompts';
 import { mcpServersConfig } from './config/mcp.config';
 import { ReviewReportSchema, ReviewReportJSONSchema } from './types';
 import type { ReviewReport } from './types';
+import { RateLimiter, globalRateLimiter, withRateLimit } from './utils';
+import type { RateLimiterConfig } from './utils';
 
 export interface OrchestratorOptions {
   model?: string;
   projectRoot?: string;
   maxTurns?: number;
+  rateLimits?: Partial<RateLimiterConfig>;
+  /** Estimated total tokens for one SDK review, including its subagents. */
+  estimatedTokensPerReview?: number;
 }
 
 export class Orchestrator {
-  constructor(private readonly options: OrchestratorOptions = {}) {}
+  private readonly rateLimiter: RateLimiter;
+
+  constructor(private readonly options: OrchestratorOptions = {}) {
+    this.rateLimiter = options.rateLimits
+      ? new RateLimiter(options.rateLimits)
+      : globalRateLimiter;
+  }
 
   async reviewPullRequest(owner: string, repo: string, prNumber: number): Promise<ReviewReport> {
     const model = this.options.model ?? process.env.ANTHROPIC_MODEL;
@@ -26,6 +37,16 @@ export class Orchestrator {
       throw new Error('Provide owner, repo, and a positive integer PR number.');
     }
 
+    return withRateLimit(
+      this.rateLimiter,
+      () => this.runReview(owner, repo, prNumber, model, cwd),
+      this.options.estimatedTokensPerReview ?? 1000,
+    );
+  }
+
+  private async runReview(
+    owner: string, repo: string, prNumber: number, model: string, cwd: string,
+  ): Promise<ReviewReport> {
     const builtInTools = ['Task', 'Read', 'Glob', 'Grep', 'Skill'];
     const stream = query({
       prompt: `Review pull request ${JSON.stringify({ owner, repo, number: prNumber })}.
