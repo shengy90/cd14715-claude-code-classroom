@@ -72,6 +72,15 @@ Return the aggregated ReviewReport. The caller will supply measured timing metad
         ],
         permissionMode: 'dontAsk',
         mcpServers: mcpServersConfig,
+        stderr: data => {
+          // SDK 0.1.56 sends its launch command here, including MCP credentials.
+          if (data.startsWith('Spawning Claude Code ')) return;
+          let sanitized = data;
+          for (const secret of [process.env.GITHUB_TOKEN, process.env.ANTHROPIC_API_KEY]) {
+            if (secret) sanitized = sanitized.split(secret).join('[REDACTED]');
+          }
+          process.stderr.write(`[sdk] ${sanitized}`);
+        },
         outputFormat: { type: 'json_schema', schema: ReviewReportJSONSchema },
       },
     });
@@ -101,11 +110,19 @@ Return the aggregated ReviewReport. The caller will supply measured timing metad
       }
 
       if (message.type !== 'result') continue;
+      if (message.permission_denials?.length) {
+        console.error('[sdk permission denials]', message.permission_denials.map(
+          denial => ({ tool: denial.tool_name, id: denial.tool_use_id }),
+        ));
+      }
       if (message.subtype !== 'success') {
         throw new Error(`Review failed (${message.subtype}): ${message.errors.join('; ')}`);
       }
       if (message.is_error || message.structured_output === undefined) {
-        throw new Error('Review did not return successful structured output.');
+        throw new Error(
+          `Review did not return successful structured output ` +
+          `(is_error=${message.is_error}). SDK response: ${message.result}`,
+        );
       }
       const parsed = ReviewReportSchema.safeParse(message.structured_output);
       if (!parsed.success) {
