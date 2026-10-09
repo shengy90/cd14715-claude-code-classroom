@@ -63,7 +63,6 @@ Return the aggregated ReviewReport. The caller will supply measured timing metad
           'test-coverage-analyzer': testCoverageAnalyzer,
           'refactoring-suggester': refactoringSuggester,
         },
-        tools: builtInTools,
         allowedTools: [
           ...builtInTools,
           'mcp__github__pull_request_read',
