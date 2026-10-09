@@ -10,3 +10,11 @@ coverage/
 *.tsbuildinfo
 .temp/
 reports/
+
+# Keep the analyzer's project skills available in fresh checkouts.
+!.claude/
+.claude/*
+!.claude/skills/
+.claude/skills/*
+!.claude/skills/javascript-best-practices/
+!.claude/skills/security-analysis/
