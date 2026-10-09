@@ -11,32 +11,35 @@
  * - ESLint MCP: https://eslint.org/docs/latest/use/mcp
  */
 
+import 'dotenv/config';
+
 export const mcpServersConfig = {
   /**
    * GitHub MCP Server
    * Provides tools for GitHub API operations
    *
-   * TODO: Configure with:
-   * - type: 'stdio' as const
-   * - command: 'npx'
-   * - args: ['-y', '@modelcontextprotocol/server-github']
-   * - env: { GITHUB_PERSONAL_ACCESS_TOKEN: process.env.GITHUB_TOKEN || '' }
-   *
-   * Note: GITHUB_TOKEN is optional (recommended for private repos and higher rate limits).
-   * The GitHub MCP server expects GITHUB_PERSONAL_ACCESS_TOKEN as the env var name.
-   * We map our GITHUB_TOKEN from .env to this expected name.
+   * Connects to GitHub's official hosted server over HTTP.
+   * Set GITHUB_TOKEN in .env to a GitHub personal access token.
+   * The remote server authenticates through an Authorization header.
    */
-  github: { },
+  github: {
+    type: 'http' as const,
+    url: 'https://api.githubcopilot.com/mcp/',
+    headers: {
+      Authorization: `Bearer ${process.env.GITHUB_TOKEN || ''}`
+    }
+  },
 
   /**
    * ESLint MCP Server
    * Provides tools for linting and code quality analysis
    *
-   * TODO: Configure with:
-   * - type: 'stdio' as const
-   * - command: 'npx'
-   * - args: ['-y', '@eslint/mcp@latest']
-   * - env: {}
+   * Runs locally over stdio; no authentication is required.
    */
-  eslint: { }
+  eslint: {
+    type: 'stdio' as const,
+    command: 'npx',
+    args: ['-y', '@eslint/mcp@latest'],
+    env: {}
+  }
 };
