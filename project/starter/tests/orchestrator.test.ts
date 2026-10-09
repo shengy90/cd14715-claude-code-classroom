@@ -1,53 +1,59 @@
-import { describe, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { query } from '@anthropic-ai/claude-agent-sdk';
+import { Orchestrator } from '../src/orchestrator';
+import { mcpServersConfig } from '../src/config/mcp.config';
+import { globalRateLimiter } from '../src/utils/rate-limiter';
+import type { ReviewReport } from '../src/types';
 
+vi.mock('@anthropic-ai/claude-agent-sdk', () => ({ query: vi.fn() }));
+vi.mock('../src/config/mcp.config', () => ({
+  mcpServersConfig: { github: { type: 'http', url: 'https://github-mcp.test' } },
+}));
+vi.mock('../src/utils/rate-limiter', async importOriginal => ({
+  ...await importOriginal<typeof import('../src/utils/rate-limiter')>(),
+  globalRateLimiter: { acquire: vi.fn().mockResolvedValue(undefined), release: vi.fn() },
+}));
 
-/**
- * Tests for CodeReviewOrchestrator
- *
- * TODO: Implement these tests
- *
- * Tips:
- * - Use vitest mocking for MCP servers
- * - Mock rate limiter to avoid delays
- * - Test both success and failure paths
- */
+const report: ReviewReport = {
+  pullRequest: { owner: 'octocat', repo: 'Hello-World', number: 1 },
+  fileReviews: [],
+  summary: {
+    totalFiles: 0, overallScore: 0, criticalIssues: 0,
+    highPriorityTests: 0, refactoringOpportunities: 0,
+  },
+  recommendations: [],
+  metadata: { analyzedAt: 'unknown', duration: 0, agentVersions: {} },
+};
 
-describe('CodeReviewOrchestrator', () => {
-  describe('Configuration', () => {
-    it('should initialize with default options', () => {
-    });
+function mockResult(result: Record<string, unknown>) {
+  vi.mocked(query).mockReturnValue((async function* () {
+    yield { type: 'result', ...result };
+  })() as ReturnType<typeof query>);
+}
 
-    it('should accept custom rate limit configuration', () => {
-      // TODO: Create orchestrator with custom rate limits
-      // TODO: Verify custom limits are applied
-    });
+describe('Orchestrator', () => {
+  afterEach(() => vi.clearAllMocks());
+
+  it('returns a successful review using mocked MCP configuration', async () => {
+    mockResult({ subtype: 'success', is_error: false, duration_ms: 123, structured_output: report });
+    const result = await new Orchestrator({ model: 'test-model' })
+      .reviewPullRequest('octocat', 'Hello-World', 1);
+
+    expect(query).toHaveBeenCalledWith(expect.objectContaining({
+      options: expect.objectContaining({ mcpServers: mcpServersConfig }),
+    }));
+    expect(result).toEqual({ ...report, metadata: {
+      ...report.metadata, analyzedAt: expect.any(String), duration: 123,
+    } });
+    expect(globalRateLimiter.acquire).toHaveBeenCalledWith(1000);
+    expect(globalRateLimiter.release).toHaveBeenCalledOnce();
   });
 
-  describe('reviewPullRequest', () => {
-    it('should fetch PR files from GitHub MCP', async () => {
-     
-    });
-
-    it('should spawn all 3 subagents in parallel', async () => {
-  
-    });
-
-    it('should aggregate results into ReviewReport', async () => {
-  
-    });
-
-    it('should validate output with Zod schema', async () => {
-    });
-
- 
-  });
-
-
-  describe('Integration', () => {
-    // These tests require actual API keys and should be skipped in CI
-    it.skip('should review a real small PR', async () => {
-      // TODO: Test with a real public PR
-      // NOTE: Only run manually with valid API keys
-    });
+  it('propagates review failures and releases the rate limiter', async () => {
+    mockResult({ subtype: 'error_max_turns', errors: ['Turn limit reached'] });
+    await expect(new Orchestrator({ model: 'test-model' })
+      .reviewPullRequest('octocat', 'Hello-World', 1))
+      .rejects.toThrow('Review failed (error_max_turns): Turn limit reached');
+    expect(globalRateLimiter.release).toHaveBeenCalledOnce();
   });
 });

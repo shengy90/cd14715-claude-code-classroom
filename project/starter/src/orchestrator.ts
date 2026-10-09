@@ -77,7 +77,30 @@ Return the aggregated ReviewReport. The caller will supply measured timing metad
       },
     });
 
+    const subagents = new Map<string, string>();
+
     for await (const message of stream) {
+      if (message.type === 'assistant') {
+        for (const block of message.message.content) {
+          if (block.type !== 'tool_use') continue;
+
+          const input = block.input as Record<string, unknown>;
+          if (block.name === 'Task' || block.name === 'Agent') {
+            subagents.set(block.id, String(input.subagent_type ?? 'unknown'));
+          }
+
+          console.log('[tool]', {
+            name: block.name,
+            id: block.id,
+            parent: message.parent_tool_use_id,
+            agent: message.parent_tool_use_id
+              ? subagents.get(message.parent_tool_use_id) ?? 'unknown subagent'
+              : 'orchestrator',
+            invokedSubagent: subagents.get(block.id),
+          });
+        }
+      }
+
       if (message.type !== 'result') continue;
       if (message.subtype !== 'success') {
         throw new Error(`Review failed (${message.subtype}): ${message.errors.join('; ')}`);
