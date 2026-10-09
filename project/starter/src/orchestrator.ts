@@ -1,4 +1,5 @@
 import { query } from '@anthropic-ai/claude-agent-sdk';
+import { fileURLToPath } from 'node:url';
 import { codeQualityAnalyzer, testCoverageAnalyzer, refactoringSuggester } from './agents';
 import { ORCHESTRATOR_PROMPT } from './prompts';
 import { mcpServersConfig } from './config/mcp.config';
@@ -11,14 +12,15 @@ export interface OrchestratorOptions {
   maxTurns?: number;
 }
 
-export class CodeReviewOrchestrator {
+export class Orchestrator {
   constructor(private readonly options: OrchestratorOptions = {}) {}
 
   async reviewPullRequest(owner: string, repo: string, prNumber: number): Promise<ReviewReport> {
     const model = this.options.model ?? process.env.ANTHROPIC_MODEL;
-    const cwd = this.options.projectRoot ?? process.env.PROJECT_ROOT;
+    // Both src/orchestrator.ts and dist/orchestrator.js sit one level below starter.
+    const cwd = this.options.projectRoot ?? fileURLToPath(new URL('../', import.meta.url));
     if (!model?.trim() || !cwd?.trim()) {
-      throw new Error('Set ANTHROPIC_MODEL and PROJECT_ROOT, or provide model and projectRoot options.');
+      throw new Error('Set ANTHROPIC_MODEL or provide a model option; projectRoot must not be empty.');
     }
     if (!owner.trim() || !repo.trim() || !Number.isSafeInteger(prNumber) || prNumber < 1) {
       throw new Error('Provide owner, repo, and a positive integer PR number.');
